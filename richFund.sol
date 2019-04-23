@@ -1,5 +1,16 @@
 pragma solidity ^0.4.25;
 
+
+contract BaseMiner {
+    
+    address public owner;
+    
+    uint256 public mintAll_ = 0;
+    mapping(address => mapping(uint256 => uint256)) public mintSpeeds_;
+    
+    function mint(address player_, uint256 amount_) public;
+}
+
 library SafeMath {
 
     function mul(uint256 a, uint256 b) internal pure returns (uint256) {
@@ -12,7 +23,6 @@ library SafeMath {
 
         uint256 c = a * b;
         require(c / a == b);
-
         return c;
     }
 
@@ -86,6 +96,7 @@ library Objects {
     }
 }
 
+
 contract Ownership {
     address public owner;
     bool public paused = false;
@@ -102,6 +113,11 @@ contract Ownership {
         admins[owner] = 1;
     }
 
+    modifier onlyOwner(){
+        require(msg.sender == owner);
+        _;
+    }
+    
     /*
      * only human is allowed to call this contract
      */
@@ -110,18 +126,23 @@ contract Ownership {
         _;
     }
 
-    function setAdmin(address owner_address) public onlyOwner {
-        admins[owner_address] = 1;
-        emit  SetAdmin(owner_address, admins[owner_address]);
+    function setAdmin(address addr_) public onlyOwner {
+        admins[addr_] = 1;
+        emit SetAdmin(addr_, 1);
     }
-
-    modifier onlyOwner(){
-        require(msg.sender == owner);
-        _;
+    
+    function updateAdmin(address addr_, uint256 state) public onlyOwner {
+        admins[addr_] = state;
+        emit SetAdmin(addr_, state);
     }
 
     modifier  onlyAdmin() {
         require(admins[msg.sender] > 0);
+        _;
+    }
+    
+    modifier  onlyAuth(uint256 auth) {
+        require(admins[msg.sender] >= auth);
         _;
     }
 
@@ -149,7 +170,6 @@ contract Ownership {
         emit GameUnPaused(msg.sender);
     }
     
-    //过户
     function transferOwner(address newOwner) public onlyOwner {
         require(newOwner != address(0));
         emit OwnershipTransferred(owner, newOwner);
@@ -162,8 +182,9 @@ contract Ownership {
     }
 }
 
-contract TronBank is Ownership {
+contract RichBank is Ownership {
     using SafeMath for uint256;
+    
     uint256 public constant DEVELOPER_RATE = 40; //per thousand
     uint256 public constant MARKETING_RATE = 20;
     uint256 public constant REFERENCE_RATE = 80;
@@ -179,11 +200,13 @@ contract TronBank is Ownership {
 
     address private developerAccount_;
     address private marketingAccount_;
-    address private referenceAccount_;
+    address private dividendPool_;
 
     mapping(address => uint256) public address2UID;
     mapping(uint256 => Objects.Investor) public uid2Investor;
     Objects.Plan[] private investmentPlans_;
+    
+    BaseMiner public tokenMiner;
 
     event onInvest(address investor, uint256 amount);
     event onGrant(address grantor, address beneficiary, uint256 amount);
@@ -195,7 +218,7 @@ contract TronBank is Ownership {
     constructor() public {
         developerAccount_ = msg.sender;
         marketingAccount_ = msg.sender;
-        referenceAccount_ = msg.sender;
+        dividendPool_ = msg.sender;
         _init();
     }
 
@@ -205,6 +228,10 @@ contract TronBank is Ownership {
         } else {
             invest(0, 0); //default to buy plan 0, no referrer
         }
+    }
+    
+    function setTokenMiner(address _tokenMiner) public onlyOwner {
+        tokenMiner = BaseMiner(_tokenMiner);
     }
 
     function setMarketingAccount(address _newMarketingAccount) public onlyOwner {
@@ -225,13 +252,16 @@ contract TronBank is Ownership {
         return developerAccount_;
     }
 
-    function setReferenceAccount(address _newReferenceAccount) public onlyOwner {
-        require(_newReferenceAccount != address(0));
-        referenceAccount_ = _newReferenceAccount;
+    function setDividendPool(address _newDividendPool) public onlyOwner {
+        require(_newDividendPool != address(0));
+        dividendPool_ = _newDividendPool;
+        latestReferrerCode = latestReferrerCode.add(1);
+        address2UID[dividendPool_] = latestReferrerCode;
+        uid2Investor[latestReferrerCode].addr = dividendPool_;
     }
 
-    function getReferenceAccount() public view onlyOwner returns (address) {
-        return referenceAccount_;
+    function getDividendPool() public view onlyOwner returns (address) {
+        return dividendPool_;
     }
 
     function _init() private {
@@ -410,6 +440,10 @@ contract TronBank is Ownership {
         developerAccount_.transfer(developerPercentage);
         uint256 marketingPercentage = (_amount.mul(MARKETING_RATE)).div(1000);
         marketingAccount_.transfer(marketingPercentage);
+        
+        if (address(tokenMiner) != 0x00){
+            tokenMiner.mint(msg.sender, msg.value);
+        }
         return true;
     }
 
@@ -508,8 +542,8 @@ contract TronBank is Ownership {
         }
 
         if (_allReferrerAmount > 0) {
-            referenceAccount_.transfer(_allReferrerAmount);
+            uint256 _refD = address2UID[dividendPool_];
+            uid2Investor[_refD].availableReferrerEarnings = _allReferrerAmount.add(uid2Investor[_refD].availableReferrerEarnings);
         }
     }
-
 }
